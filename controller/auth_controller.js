@@ -6,13 +6,16 @@ const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
 const otpGenerator = require("otp-generator");
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = require("twilio")(accountSid, authToken);
 
 exports.signup = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, mobile } = req.body;
 
-    const user = new User({ name, email, password });
-    const _id = await authService.signup(name, email, password);
+    const user = new User({ name, email, password, mobile });
+    const _id = await authService.signup(name, email, password, mobile);
     //generating otp
     const OTP = otpGenerator.generate(6, {
       number: true,
@@ -22,8 +25,9 @@ exports.signup = async (req, res) => {
     });
     console.log(OTP);
 
-    // connect with the smtp
-    const transporter = nodemailer.createTransport({
+
+    ////sending otp to email  ////
+    const transporter = nodemailer.createTransport({ // connect with the smtp
       service: "gmail",
       auth: {
         user: process.env.AUTH_EMAIL,
@@ -32,22 +36,28 @@ exports.signup = async (req, res) => {
     });
 
     let info = await transporter.sendMail({
-      from: `"Message from PDHunt"<process.env.AUTH_EMAIL>`, // sender address
+      from: `"Message from PDHunt" <process.env.AUTH_EMAIL>`, // sender address
       to: email, // list of receivers
       subject: "OTP Verifictaion", // Subject line
       text: `This is your otp: ${OTP} for verification`, // plain text body
-      html: `<b>This is your otp: ${OTP} for verification.The OTP will expires in 5 mins </b>`, // html body
+      html: `<b>This is your OTP: ${OTP} for verification.The OTP will expires in 5 mins </b>`, // html body
     });
 
-    const otp = new Otp({ email: email, otp: OTP });//making new record in otp collection
-    const salt = await bcrypt.genSalt(10);
-    otp.otp = await bcrypt.hash(otp.otp, salt);
-    await otp.save();
-    console.log("OTP sent successfully");
+
+    ////sending otp to mobile////
+    await client.messages.create({
+      body: `This is your OTP: ${OTP} for verification.The OTP will expires in 5 mins `,
+      from: process.env.TWILIO_FROM,
+      to: `${mobile}`,
+    });
+
+    const otp = new Otp({ email: email, mobile: mobile, otp: OTP }); //making new record in otp collection
+    await authService.saveOtpToDB(otp);
 
     res.status(201).json({
       id: _id,
-      message: "OTP sent Successfully on your registered email. Please Verify",
+      message:
+        "OTP sent Successfully on your registered email and mobile number . Please Verify",
     });
   } catch (error) {
     console.log("error in user post ", error);
@@ -100,28 +110,55 @@ exports.verifyToken = async (req, res, next) => {
   }
 };
 
-exports.verifyOtpByEmail = async(req, res) => {
+exports.verifyOtpByEmail = async (req, res) => {
   try {
-      const { email, otp } = req.body;
-      const otpHolder = await Otp.findOne({ email });
-      if (!otpHolder) {
-          return res.status(400).json({message:"OTP not found"});
-      }
+    const { email, otp } = req.body;
+    const otpHolder = await Otp.findOne({ email });
+    if (!otpHolder) {
+      return res.status(400).json({ message: "OTP not found" });
+    }
 
-      const isOtpValid = await bcrypt.compare(otp, otpHolder.otp);
-      if (!isOtpValid) {
-          return res.status(400).json({message:"Invalid OTP"});
-      }
+    const isOtpValid = await bcrypt.compare(otp, otpHolder.otp);
+    if (!isOtpValid) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
 
-      await User.updateOne({ email: email }, { verified: true });
-      await Otp.deleteOne({ email:email });
+    await User.updateOne({ email: email }, { emailVerified: true });
+    const userInDB =  await User.findOne({email:email});
+    if(userInDB.mobileVerified == true)  await Otp.deleteOne({ email: email });
 
-      return res
-          .status(200)
-          .json({message :"OTP verified successfully. Your account is now verified."});
+    return res.status(200).json({
+      message: "Email verified Succesfully",
+    });
   } catch (error) {
-      console.log("Error in verifying OTP ", error);
-      res.status(400).send({ message: error.message });
+    console.log("Error in verifying OTP ", error);
+    res.status(400).send({ message: error.message });
   }
 };
 
+
+exports.verifyOtpByMobile = async (req, res) => {
+  try {
+    const {mobile, otp  } = req.body;
+    const otpHolder = await Otp.findOne({ mobile });
+    if (!otpHolder) {
+      return res.status(400).json({ message: "OTP not found" });
+    }
+
+    const isOtpValid = await bcrypt.compare(otp, otpHolder.otp);
+    if (!isOtpValid) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    await User.updateOne({ mobile: mobile }, { mobileVerified: true });
+    const userInDB =  await User.findOne({mobile:mobile});
+    if(userInDB.emailVerified == true)  await Otp.deleteOne({ mobile: mobile });
+
+    return res.status(200).json({
+      message: "Mobile number verified successfully",
+    });
+  } catch (error) {
+    console.log("Error in verifying OTP ", error);
+    res.status(400).send({ message: error.message });
+  }
+};

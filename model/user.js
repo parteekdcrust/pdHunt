@@ -24,6 +24,13 @@ const userSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  mobile:{
+    type:String,
+    required:true,
+    // maxlength:10,
+    // minlength:10,
+    // unique:true
+  },
   token: {
     type: String,
   },
@@ -31,7 +38,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  verified:{
+  emailVerified:{
+    type:Boolean,
+    default:false
+  },
+  mobileVerified:{
     type:Boolean,
     default:false
   }
